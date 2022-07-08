@@ -1,50 +1,46 @@
 #!/bin/bash
 
-#get highest tag number
-VERSION=`git describe --abbrev=0 --tags`
+tag_repo () {
+    git tag "$1.$2.$3"
+    git checkout develop
+    git merge $merged_branch_name
+    git checkout master
+}
 
-#replace . with space so can split into an array
-VERSION_BITS=(${VERSION//./ })
+push_changes() {
+    # Check if remote origin exists
+    git ls-remote --exit-code origin
 
-#get number parts and increase last one by 1
-VNUM1=${VERSION_BITS[0]}
-VNUM2=${VERSION_BITS[1]}
-VNUM3=${VERSION_BITS[2]}
-VNUM1=`echo $VNUM1 | sed 's/v//'`
+    if [[ $? = 0 ]]; then
+        git push origin --tags
+        git push origin develop
+        echo -e "\033[0;32mNew release tagged and pushed to remote origin."
+        # SAFETY SAFETY let's not delete develop by accident here...
+        if [[ $"merged_branch_name" -ne "develop" ]]; then
+            echo "Discarding branch $merged_branch_name..."
+            git branch -d $merged_branch_name
+        fi
+    else
+        echo -e "\033[0;31mRemote origin does not exist, releaes tag and develop branch not pushed!"
+    fi
+}
 
-# Check for #major or #minor in commit message and increment the relevant version number
-MAJOR=`git log --format=%B -n 1 HEAD | grep '#major'`
-MINOR=`git log --format=%B -n 1 HEAD | grep '#minor'`
+target_branch=$(git rev-parse --symbolic --abbrev-ref HEAD)
+reflog_message=$(git reflog -1)
+merged_branch_name=$(echo $reflog_message | cut -d" " -f 4 | sed "s/://")
+release_pattern="^release-([0-9]+)\.([0-9]+)\.(.*)$"
+hotfix_pattern="^hotfix-([0-9]+)\.([0-9]+)\.(.*)$"
 
-if [ "$MAJOR" ]; then
-    echo "Update major version"
-    VNUM1=$((VNUM1+1))
-    VNUM2=0
-    VNUM3=0
-elif [ "$MINOR" ]; then
-    echo "Update minor version"
-    VNUM2=$((VNUM2+1))
-    VNUM3=0
-else
-    echo "Update patch version"
-    VNUM3=$((VNUM3+1))
-fi
+if [ "$target_branch" = "master" ]; then
+    if [[ "$merged_branch_name" =~ $release_pattern ]] || [[ "$merged_branch_name" =~ $hotfix_pattern ]]; then
+        
+        echo -e "\033[1;33mNew release merge detected, auto-creating release tag and merging changes into develop..."
 
+        major_ver=${BASH_REMATCH[1]}
+        minor_ver=${BASH_REMATCH[2]}
+        patch_ver=${BASH_REMATCH[3]}
 
-#create new tag
-NEW_TAG="v$VNUM1.$VNUM2.$VNUM3"
-
-echo "Updating $VERSION to $NEW_TAG"
-
-#get current hash and see if it already has a tag
-GIT_COMMIT=`git rev-parse HEAD`
-NEEDS_TAG=`git describe --contains $GIT_COMMIT`
-
-#only tag if no tag already (would be better if the git describe command above could have a silent option)
-if [ -z "$NEEDS_TAG" ]; then
-    echo "Tagged with $NEW_TAG (Ignoring fatal:cannot describe - this means commit is untagged) "
-    git tag $NEW_TAG
-    git push --tags
-else
-    echo "Already a tag on this commit"
+        tag_repo $major_ver $minor_ver $patch_ver
+        push_changes $merged_branch_name
+    fi
 fi
